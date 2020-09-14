@@ -1,0 +1,6 @@
+data/zhwiki/
+data/enwiki_bookcorpus/
+model/
+log/
+cache/
+simple_config.json
