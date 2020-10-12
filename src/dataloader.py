@@ -1,5 +1,5 @@
 import os
-from datasets import load_dataset
+from datasets import load_dataset, Dataset
 from typing import Optional
 from dataclasses import dataclass, field
 
@@ -97,6 +97,12 @@ class DataTrainingArguments:
     preprocess_num_process: int = field(
         default=16, metadata={"help": "Number of processes for multiprocessing."}
     )
+    load_from_disk: bool = field(
+        default=False, metadata={"help": "Load dataset from disk."}
+    )
+    preprocess_output_file: Optional[str] = field(
+        default=None, metadata={"help": "Path to preprocess dataset."}
+    )
 
 
 def get_dataset(
@@ -106,6 +112,9 @@ def get_dataset(
     cache_dir: Optional[str] = None,
 ):
     file_path = args.eval_data_file if evaluate else args.train_data_file
+    if args.load_from_disk:
+        return Dataset.load_from_disk(file_path)
+
     if os.path.isdir(file_path):
         file_names = os.listdir(file_path)
         file_path = [os.path.join(file_path, fn) for fn in file_names]
@@ -168,4 +177,5 @@ if __name__ == "__main__":
 
     config = AutoConfig.from_pretrained(model_args.config_name, cache_dir=model_args.cache_dir)
     tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir, config=config)
-    get_dataset(data_args, tokenizer=tokenizer, cache_dir=model_args.cache_dir)
+    dataset = get_dataset(data_args, tokenizer=tokenizer, cache_dir=model_args.cache_dir)
+    dataset.save_to_disk(data_args.preprocess_output_file)

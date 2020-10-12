@@ -19,59 +19,42 @@ if [ ! -d $CACHE_DIR ]; then
 fi
 
 if [ ! -d $TOKENIZE_DIR ]; then
-  mkdir $CACHE_DIR
+  mkdir $TOKENIZE_DIR
 fi
 
 CORPUS_NAME=enwiki_bookcorpus
 MODEL_NAME=roberta
 
-CORPUS_PATH=$DATA_DIR/$CORPUS_NAME
-CONFIG_PATH=$CONFIG_DIR/en/$MODEL_NAME-base-config.json
+CONFIG_PATH=$CONFIG_DIR/en/$MODEL_NAME-tiny-config.json
 TOKENIZE_PATH=$TOKENIZE_DIR/$CORPUS_NAME
-OUTPUT_PATH=$OUTPUT_DIR/$CORPUS_NAME
-DATA_CACHE_PATH=$CACHE_DIR/$CORPUS_NAME-train.arrow
+OUTPUT_PATH=$OUTPUT_DIR/$CORPUS_NAME-tiny
+DATA_PATH=$DATA_DIR/$CORPUS_NAME-tiny-disk
 
-PREPROCESS_BATCH_SIZE=1000
-BLOCK_SIZE=512
-PREPROCESS_NUM_PROCESS=8
-MLM_PROBABILITY=0.15
 
-python3 src/dataloader.py \
-    --train_data_file $CORPUS_PATH \
-    --cache_dir $CACHE_DIR \
-    --config_name $CONFIG_PATH \
-    --tokenizer_name $TOKENIZE_PATH \
-    --block_size $BLOCK_SIZE \
-    --preprocess_batch_size $PREPROCESS_BATCH_SIZE \
-    --preprocess_cache_file $DATA_CACHE_PATH \
-    --preprocess_num_process $PREPROCESS_NUM_PROCESS
-
-python3 src/run.py \
+python3 -m torch.distributed.launch --nproc_per_node 8 $DISK_CODE/src/run.py \
     --model_type $MODEL_NAME \
     --output_dir $OUTPUT_PATH \
     --config_name $CONFIG_PATH \
     --tokenizer_name $TOKENIZE_PATH \
     --cache_dir $CACHE_DIR \
-    --train_data_file $CORPUS_PATH \
+    --logging_dir $LOG_DIR \
+    --train_data_file $DATA_PATH \
+    --load_from_disk \
     --mlm \
-    --mlm_probability $MLM_PROBABILITY \
-    --block_size $BLOCK_SIZE \
-    --preprocess_batch_size $PREPROCESS_BATCH_SIZE \
-    --preprocess_cache_file $DATA_CACHE_PATH \
-    --preprocess_num_process $PREPROCESS_NUM_PROCESS \
+    --mlm_probability 0.15 \
+    --block_size 256 \
     --do_train \
     --prediction_loss_only \
-    --per_device_train_batch_size 8000 \
+    --per_device_train_batch_size 64 \
     --gradient_accumulation_steps 1 \
-    --learning_rate 0.0006 \
+    --learning_rate 0.0001 \
     --weight_decay 0.01 \
     --adam_beta1 0.9 \
-    --adam_beta2 0.98 \
+    --adam_beta2 0.999 \
     --adam_epsilon 0.000001 \
-    --max_grad_norm 0.0 \
-    --max_steps 500000 \
-    --warmup_steps 24000 \
+    --max_steps 1000000 \
+    --warmup_steps 10000 \
     --seed 12345 \
     --save_steps 1000 \
-    --save_total_limit 3 \
-    --overwrite_output_dir
+    --logging_steps 1000 \
+    --save_total_limit 10

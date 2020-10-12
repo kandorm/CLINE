@@ -62,22 +62,26 @@ def main():
             "or remove the --do_eval argument."
         )
 
-    if (
-        os.path.exists(training_args.output_dir)
-        and os.listdir(training_args.output_dir)
-        and training_args.do_train
-        and not training_args.overwrite_output_dir
-    ):
-        raise ValueError(
-            f"Output directory ({training_args.output_dir}) already exists and is not empty. Use --overwrite_output_dir to overcome."
-        )
-
     # Setup logging
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO if training_args.local_rank in [-1, 0] else logging.WARN,
     )
+
+    if (
+        os.path.exists(training_args.output_dir)
+        and os.listdir(training_args.output_dir)
+        and training_args.do_train
+    ):
+        if not training_args.overwrite_output_dir:
+            ckt = os.listdir(training_args.output_dir)
+            ckt.sort(key=lambda x:int(x.split('-')[-1]))
+            model_args.model_name_or_path=os.path.join(training_args.output_dir, ckt[-1])
+            logger.info(f"Output directory ({training_args.output_dir}) already exists and is not empty. Training from checkout %s.", model_args.model_name_or_path)
+        else:
+            pass
+
     logger.warning(
         "Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s",
         training_args.local_rank,
@@ -97,10 +101,10 @@ def main():
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
 
-    if model_args.config_name:
-        config = AutoConfig.from_pretrained(model_args.config_name, cache_dir=model_args.cache_dir)
-    elif model_args.model_name_or_path:
+    if model_args.model_name_or_path:
         config = AutoConfig.from_pretrained(model_args.model_name_or_path, cache_dir=model_args.cache_dir)
+    elif model_args.config_name:
+        config = AutoConfig.from_pretrained(model_args.config_name, cache_dir=model_args.cache_dir)
     else:
         config = CONFIG_MAPPING[model_args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
