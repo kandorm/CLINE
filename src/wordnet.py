@@ -1,8 +1,8 @@
 from nltk.corpus import wordnet as wn
-from nltk.stem import WordNetLemmatizer
+#from nltk.stem import WordNetLemmatizer
 from lemminflect import getInflection
 
-wnl = WordNetLemmatizer()
+#wnl = WordNetLemmatizer()
 
 REPLACE_TAG = ['NN', 'NNS', 'JJ', 'JJR', 'JJS', 'RB', 'RBR', 'RBS', 'VB', 'VBD', 'VBG', 'VBN', 'VBP', 'VBZ'] # [NNP, NNPS]
 REPLACE_POS = ['NOUN', 'VERB', 'ADJ', 'ADV']
@@ -14,20 +14,21 @@ POS_TO_TAGS = {'NOUN': ['NN', 'NNS'],
 
 def get_synonym(token):
     lemma = token.lemma_
+    text = token.text
     tag = token.tag_
     pos = token.pos_
     word_synset = set()
     if pos not in REPLACE_POS:
         return list(word_synset)
 
-    synsets = wn.synsets(lemma, pos=eval("wn."+pos))
+    synsets = wn.synsets(text, pos=eval("wn."+pos))
     for synset in synsets:
         words = synset.lemma_names()
         for word in words:
-            word = wnl.lemmatize(word, pos=eval("wn."+pos))
+            #word = wnl.lemmatize(word, pos=eval("wn."+pos))
             if word.lower() != lemma.lower():
-                inflt = getInflection(word, tag=tag)
-                word = inflt[0] if len(inflt) else word
+                # inflt = getInflection(word, tag=tag)
+                # word = inflt[0] if len(inflt) else word
                 word = word.replace('_', ' ')
                 word_synset.add(word)
 
@@ -36,21 +37,22 @@ def get_synonym(token):
 
 def get_hypernyms(token):
     lemma = token.lemma_
+    text = token.text
     tag = token.tag_
     pos = token.pos_
     word_hypernyms = set()
     if pos not in REPLACE_POS:
         return list(word_hypernyms)
 
-    synsets = wn.synsets(lemma, pos=eval("wn."+pos))
+    synsets = wn.synsets(text, pos=eval("wn."+pos))
     for synset in synsets:
         for hyperset in synset.hypernyms():
             words = hyperset.lemma_names()
             for word in words:
-                word = wnl.lemmatize(word, pos=eval("wn."+pos))
+                #word = wnl.lemmatize(word, pos=eval("wn."+pos))
                 if word.lower() != lemma.lower():
-                    inflt = getInflection(word, tag=tag)
-                    word = inflt[0] if len(inflt) else word
+                    # inflt = getInflection(word, tag=tag)
+                    # word = inflt[0] if len(inflt) else word
                     word = word.replace('_', ' ')
                     word_hypernyms.add(word)
 
@@ -59,21 +61,22 @@ def get_hypernyms(token):
 
 def get_antonym(token):
     lemma = token.lemma_
+    text = token.text
     tag = token.tag_
     pos = token.pos_
     word_antonym = set()
     if pos not in REPLACE_POS:
         return list(word_antonym)
 
-    synsets = wn.synsets(lemma, pos=eval("wn."+pos))
+    synsets = wn.synsets(text, pos=eval("wn."+pos))
     for synset in synsets:
         for synlemma in synset.lemmas():
             for antonym in synlemma.antonyms():
                 word = antonym.name()
-                word = wnl.lemmatize(word, pos=eval("wn."+pos))
+                #word = wnl.lemmatize(word, pos=eval("wn."+pos))
                 if word.lower() != lemma.lower():
-                    inflt = getInflection(word, tag=tag)
-                    word = inflt[0] if len(inflt) else word
+                    # inflt = getInflection(word, tag=tag)
+                    # word = inflt[0] if len(inflt) else word
                     word = word.replace('_', ' ')
                     word_antonym.add(word)
 
