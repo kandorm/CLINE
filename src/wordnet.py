@@ -26,7 +26,7 @@ def get_synonym(token):
         words = synset.lemma_names()
         for word in words:
             #word = wnl.lemmatize(word, pos=eval("wn."+pos))
-            if word.lower() != lemma.lower():
+            if word.lower() != text.lower():
                 # inflt = getInflection(word, tag=tag)
                 # word = inflt[0] if len(inflt) else word
                 word = word.replace('_', ' ')
@@ -50,7 +50,7 @@ def get_hypernyms(token):
             words = hyperset.lemma_names()
             for word in words:
                 #word = wnl.lemmatize(word, pos=eval("wn."+pos))
-                if word.lower() != lemma.lower():
+                if word.lower() != text.lower():
                     # inflt = getInflection(word, tag=tag)
                     # word = inflt[0] if len(inflt) else word
                     word = word.replace('_', ' ')
@@ -74,7 +74,7 @@ def get_antonym(token):
             for antonym in synlemma.antonyms():
                 word = antonym.name()
                 #word = wnl.lemmatize(word, pos=eval("wn."+pos))
-                if word.lower() != lemma.lower():
+                if word.lower() != text.lower():
                     # inflt = getInflection(word, tag=tag)
                     # word = inflt[0] if len(inflt) else word
                     word = word.replace('_', ' ')
