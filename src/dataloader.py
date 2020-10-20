@@ -38,9 +38,9 @@ from random_words import RandomWords
 rw = RandomWords()
 
 REPLACE_RATIO = 0.15
-POSITIVE_RATIO = 0.45
-NEGATIVE_RATIO = 0.45
-ORIGINAL_RATIO = 0.10
+POSITIVE_RATIO = 1/3
+NEGATIVE_RATIO = 1/3
+ORIGINAL_RATIO = 1/3
 
 REPLACE_ORIGINAL = 0
 REPLACE_LEMMINFLECT = 1
@@ -215,25 +215,20 @@ def get_dataset(
 
 
     def word_replace(examples):
-        input_ids = []
+        original_sent = []
         synonym_sent = []
         antonym_sent = []
         synonym_antonym_sent = []
         replace_label = []
 
-        tokenized_text = []
-        tokenized_synonym = []
-        tokenized_antonym = []
-        tokenized_synonym_antonym = []
-        tokenized_replace_label = []
-
-        doc_sep_token_id = tokenizer.convert_tokens_to_ids("\n")
-        pad_token_id = tokenizer.pad_token_type_id
-        block_size = args.block_size - tokenizer.num_special_tokens_to_add(pair=False)
+        block_size = args.block_size - 2
+        bos_token_id = tokenizer.bos_token_id
+        eos_token_id = tokenizer.eos_token_id
 
         lines = examples['text']
         docs = spacy_nlp.pipe(lines, n_process=1, batch_size=100, disable=['parser', 'ner'])
         for doc in docs:
+            if len(doc) < 2: continue  # line break
             ori_sent = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(" ".join([t.text for t in doc])))
             syn_sent = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(doc._._synonym_sent))
             ant_sent = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(doc._._antonym_sent))
@@ -242,42 +237,19 @@ def get_dataset(
             rep_lab = get_replace_label(syn_ant_sent, doc._._replace_intv)
             syn_ant_sent = tokenizer.convert_tokens_to_ids(syn_ant_sent)
 
-            # Synonym substitution will change the token number of BPE, we should pad all sentence to the maximum length
-            max_length = max([len(ori_sent), len(syn_sent), len(ant_sent), len(syn_ant_sent)])
-            ori_sent += [pad_token_id] * (max_length - len(ori_sent)) + [doc_sep_token_id]
-            syn_sent += [pad_token_id] * (max_length - len(syn_sent)) + [doc_sep_token_id]
-            ant_sent += [pad_token_id] * (max_length - len(ant_sent)) + [doc_sep_token_id]
-            syn_ant_sent += [pad_token_id] * (max_length - len(syn_ant_sent)) + [doc_sep_token_id]
-            rep_lab += [REPLACE_NONE] * (max_length - len(rep_lab)) + [REPLACE_NONE]
+            ori_sent = [bos_token_id] + ori_sent[:block_size] + [eos_token_id]
+            syn_sent = [bos_token_id] + syn_sent[:block_size] + [eos_token_id]
+            ant_sent = [bos_token_id] + ant_sent[:block_size] + [eos_token_id]
+            syn_ant_sent = [bos_token_id] + syn_ant_sent[:block_size] + [eos_token_id]
+            rep_lab = [REPLACE_NONE] + rep_lab[:block_size] + [REPLACE_NONE]
 
-            tokenized_text.extend(ori_sent)
-            tokenized_synonym.extend(syn_sent)
-            tokenized_antonym.extend(ant_sent)
-            tokenized_synonym_antonym.extend(syn_ant_sent)
-            tokenized_replace_label.extend(rep_lab)
+            original_sent.append(ori_sent)
+            synonym_sent.append(syn_sent)
+            antonym_sent.append(ant_sent)
+            synonym_antonym_sent.append(syn_ant_sent)
+            replace_label.append(rep_lab)
 
-
-        for i in range(0, len(tokenized_text) - block_size + 1, block_size):  # Truncate in block of block_size
-            input_ids.append(
-                tokenizer.build_inputs_with_special_tokens(tokenized_text[i : i + block_size])
-            )
-            synonym_sent.append(
-                tokenizer.build_inputs_with_special_tokens(tokenized_synonym[i : i + block_size])
-            )
-            antonym_sent.append(
-                tokenizer.build_inputs_with_special_tokens(tokenized_antonym[i : i + block_size])
-            )
-            synonym_antonym_sent.append(
-                tokenizer.build_inputs_with_special_tokens(tokenized_synonym_antonym[i : i + block_size])
-            )
-            # TODO:: change to 'build_inputs_with_special_tokens'
-            replace_label.append(
-                [REPLACE_NONE] + tokenized_replace_label[i : i + block_size] + [REPLACE_NONE]
-            )
-        # Note that we are losing the last truncated example here for the sake of simplicity (no padding)
-        # If your dataset is small, first you should loook for a bigger one :-) and second you
-        # can change this behavior by adding (model specific) padding.
-        return {'input_ids': input_ids,
+        return {'original_sent': original_sent,
                 'synonym_sent': synonym_sent,
                 'antonym_sent': antonym_sent,
                 'synonym_antonym_sent': synonym_antonym_sent,
@@ -305,7 +277,7 @@ def get_dataset(
                               load_from_cache_file=True,
                               cache_file_name=args.preprocess_cache_file,
                               num_proc=args.preprocess_num_process)
-        dataset.set_format(type='torch', columns=['input_ids', 'synonym_sent', 'antonym_sent', 'synonym_antonym_sent', 'replace_label'])
+        dataset.set_format(type=None, columns=['original_sent', 'synonym_sent', 'antonym_sent', 'synonym_antonym_sent', 'replace_label'])
 
     else:
         dataset = dataset.map(lines_to_block,
@@ -321,6 +293,43 @@ def get_dataset(
     return dataset
 
 
+def search_replacement(doc, candidate_index, replace_type, max_num, pos_to_words=None):
+    sr_rep = []
+    if max_num < 1:
+        return sr_rep
+
+    for r_idx in candidate_index:
+        token = doc[r_idx]
+        rep = None
+        if replace_type == REPLACE_ANTONYM:
+            reps = get_antonym(token)
+            rep = random.choice(reps) if reps else None
+        elif replace_type == REPLACE_ADJACENCY:
+            reps = pos_to_words[token.pos_]
+            rep = random.choice(reps) if reps else None
+        elif replace_type == REPLACE_RANDOM:
+            rep = rw.random_word()
+        elif replace_type == REPLACE_SYNONYM:
+            reps = get_synonym(token)
+            rep = random.choice(reps) if reps else None
+        elif replace_type == REPLACE_HYPERNYMS:
+            reps = get_hypernyms(token)
+            rep = random.choice(reps) if reps else None
+        elif replace_type == REPLACE_LEMMINFLECT:
+            reps = get_lemminflect(token)
+            rep = random.choice(reps) if reps else None
+        else:
+            pass
+
+        if rep and rep.lower() != token.text.lower():
+            sr_rep.append((r_idx, rep, replace_type))
+
+        if len(sr_rep) >= max_num:
+            break
+
+    return sr_rep
+
+
 def replace_word(doc):
     synonym_sent = []
     antonym_sent = []
@@ -332,75 +341,77 @@ def replace_word(doc):
 
     rep_index = []
     pos_word = {p:[] for p in REPLACE_POS}
-    cur_pos = {p:0 for p in REPLACE_POS}
     for index, token in enumerate(doc):
         if token.pos_ in REPLACE_POS:
             rep_index.append(index)
             pos_word[token.pos_].append(token.text)
+
     rep_num = min(rep_num, len(rep_index))
-    rep_index = random.sample(rep_index, rep_num)
+    ori_num = int(rep_num * ORIGINAL_RATIO)
+    syn_num = int(rep_num * (ORIGINAL_RATIO+POSITIVE_RATIO)) - ori_num
+    ant_num = rep_num - ori_num - syn_num
+
+    syn_rand = random.random()
+    ant_rand = random.random()
+    cand_index = rep_index[:]
+    random.shuffle(cand_index)
+
+    syn_replace = []
+    ant_replace = [] # [(rep_idx, rep_word, rep_type)]
+    ori_replace = []
+
+    ############### Antonym Replacement ####################
+    if ant_rand < ANTONYM_RATIO:
+        ant_replace = search_replacement(doc, candidate_index=cand_index, replace_type=REPLACE_ANTONYM, max_num=ant_num)
+
+    if not ant_replace and ant_rand < ANTONYM_RATIO + ADJACENCY_RATIO:
+        ant_replace = search_replacement(doc, candidate_index=cand_index, replace_type=REPLACE_ADJACENCY, max_num=ant_num, pos_to_words=pos_word)
+
+    if not ant_replace:
+        ant_replace = search_replacement(doc, candidate_index=cand_index, replace_type=REPLACE_RANDOM, max_num=ant_num)
+
+    for r in ant_replace:
+        ant_rep_idx = r[0]
+        cand_index.remove(ant_rep_idx)
+
+    ############### Synonym Replacement ####################
+    if syn_rand < HYPERNYMS_RATIO:
+        syn_replace = search_replacement(doc, candidate_index=cand_index, replace_type=REPLACE_HYPERNYMS, max_num=syn_num)
+
+    if not syn_replace and syn_rand < HYPERNYMS_RATIO + SYNONYM_RATIO:
+        syn_replace = search_replacement(doc, candidate_index=cand_index, replace_type=REPLACE_SYNONYM, max_num=syn_num)
+
+    if not syn_replace:
+        syn_replace = search_replacement(doc, candidate_index=cand_index, replace_type=REPLACE_LEMMINFLECT, max_num=syn_num)
+
+    for r in syn_replace:
+        syn_rep_idx = r[0]
+        cand_index.remove(syn_rep_idx)
+
+    ############### Original Replacement ####################
+    for r_idx in random.sample(cand_index, ori_num):
+        ori_replace.append((r_idx, doc[r_idx].text, REPLACE_ORIGINAL))
+
+    all_replace = ant_replace + syn_replace + ori_replace
+    all_replace = sorted(all_replace, key=lambda x:x[0], reverse=True)
 
     cur_len = -1 # point to the space before next token
+    rep_idx, rep_word, rep_type = all_replace.pop() if all_replace else (None, None, None)
     for index, token in enumerate(doc):
         syn = ant = mx = token.text
 
-        if index in rep_index:
-            rep_type = REPLACE_ORIGINAL
-
-            syn_ant_rand = random.random()
-            if syn_ant_rand < POSITIVE_RATIO:
-
-                syn_rand = random.random()
-
-                if syn_rand < SYNONYM_RATIO: # synonym replacement
-                    syns = get_synonym(token)
-                    syn = random.choice(syns) if syns else token.text
-                    if syn != token.text:
-                        rep_type = REPLACE_SYNONYM
-
-                if rep_type == REPLACE_ORIGINAL and syn_rand < SYNONYM_RATIO + HYPERNYMS_RATIO: # hypernyms replacement
-                    syns = get_hypernyms(token)
-                    syn = random.choice(syns) if syns else token.text
-                    if syn != token.text:
-                        rep_type = REPLACE_HYPERNYMS
-
-                if rep_type == REPLACE_ORIGINAL: # lemminflect
-                    syns = get_lemminflect(token)
-                    syn = random.choice(syns) if syns else token.text
-                    if syn != token.text:
-                        rep_type = REPLACE_LEMMINFLECT
-
+        if index == rep_idx:
+            if rep_type in [REPLACE_SYNONYM, REPLACE_HYPERNYMS, REPLACE_LEMMINFLECT]:
+                syn = rep_word
                 mx = syn
-
-            elif syn_ant_rand < POSITIVE_RATIO + NEGATIVE_RATIO:
-
-                ant_rand = random.random()
-
-                if ant_rand < ANTONYM_RATIO: # antonym replacement
-                    ants = get_antonym(token)
-                    ant = random.choice(ants) if ants else token.text
-                    if ant != token.text:
-                        rep_type = REPLACE_ANTONYM
-
-                if rep_type == REPLACE_ORIGINAL and ant_rand < ANTONYM_RATIO + ADJACENCY_RATIO:
-                    c_p = cur_pos[token.pos_]
-                    s_p = min(0, c_p-2)
-                    ants = pos_word[token.pos_][s_p:c_p] + pos_word[token.pos_][c_p+1:c_p+3]
-                    ant = random.choice(ants) if ants else token.text
-                    if ant != token.text:
-                        rep_type = REPLACE_ADJACENCY
-
-                if rep_type == REPLACE_ORIGINAL: # hypernyms replacement
-                    ant = rw.random_word()
-                    if ant != token.text:
-                        rep_type = REPLACE_RANDOM
-
+            elif rep_type in [REPLACE_ANTONYM, REPLACE_ADJACENCY, REPLACE_RANDOM]:
+                ant = rep_word
                 mx = ant
+            else:
+                mx = rep_word
 
             replace_intv.append((cur_len, cur_len + len(mx.encode('utf-8')), rep_type)) # fix length mismatch, mx.encode for bytelevelbpe
-
-        if token.pos_ in REPLACE_POS:
-            cur_pos[token.pos_] += 1
+            rep_idx, rep_word, rep_type = all_replace.pop() if all_replace else (None, None, None)
 
         cur_len = cur_len + len(mx.encode('utf-8')) + 1 # point to the space before next token
         synonym_sent.append(syn)
@@ -422,7 +433,7 @@ if __name__ == "__main__":
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments,))
     model_args, data_args = parser.parse_args_into_dataclasses()
 
-    spacy_nlp = spacy.load(data_args.lang)
+    spacy_nlp = spacy.load(data_args.lang) # 'en_core_web_sm'
     spacy_nlp.add_pipe(replace_word, last=True)
 
     config = AutoConfig.from_pretrained(model_args.config_name, cache_dir=model_args.cache_dir)
