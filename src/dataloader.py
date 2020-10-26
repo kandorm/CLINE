@@ -266,7 +266,7 @@ def get_dataset(
                               load_from_cache_file=True,
                               cache_file_name=args.preprocess_cache_file,
                               num_proc=args.preprocess_num_process)
-        dataset.set_format(type='torch', columns=['input_ids'])
+        dataset.set_format(type=None, columns=['input_ids'])
 
     elif args.word_replace:
         dataset = dataset.map(word_replace,
@@ -288,7 +288,7 @@ def get_dataset(
                               load_from_cache_file=True,
                               cache_file_name=args.preprocess_cache_file,
                               num_proc=args.preprocess_num_process)
-        dataset.set_format(type='torch', columns=['input_ids'])
+        dataset.set_format(type=None, columns=['input_ids'])
 
     return dataset
 

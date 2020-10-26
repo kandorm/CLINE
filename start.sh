@@ -1,10 +1,15 @@
-#!/usr/bin bash
-DATA_DIR=./data
-LOG_DIR=./log
-CONFIG_DIR=./config
-OUTPUT_DIR=./model
-CACHE_DIR=./cache
-TOKENIZE_DIR=$DATA_DIR/tokenize
+#!/usr/bin/env bash
+DISK_DIR=.
+DISK_CODE=.
+DISK_DATA=$DISK_DIR/data
+
+LOG_DIR=$DISK_DIR/log
+OUTPUT_DIR=$DISK_DIR/model
+CACHE_DIR=$DISK_DIR/cache
+
+CONFIG_DIR=$DISK_CODE/config
+TOKENIZE_DIR=$DISK_DATA/tokenize
+DATA_DIR=$DISK_DATA/disk
 
 if [ ! -d $LOG_DIR ]; then
   mkdir $LOG_DIR
@@ -23,12 +28,12 @@ if [ ! -d $TOKENIZE_DIR ]; then
 fi
 
 CORPUS_NAME=enwiki_bookcorpus
-MODEL_NAME=roberta
+MODEL_NAME=lecbert
 
 CONFIG_PATH=$CONFIG_DIR/en/$MODEL_NAME-tiny-config.json
 TOKENIZE_PATH=$TOKENIZE_DIR/$CORPUS_NAME
-OUTPUT_PATH=$OUTPUT_DIR/$CORPUS_NAME-tiny
-DATA_PATH=$DATA_DIR/$CORPUS_NAME-tiny-disk
+OUTPUT_PATH=$OUTPUT_DIR/$CORPUS_NAME-$MODEL_NAME-tiny
+DATA_PATH=$DATA_DIR/$CORPUS_NAME-tiny-lec-disk
 
 
 python3 -m torch.distributed.launch --nproc_per_node 8 $DISK_CODE/src/run.py \
@@ -45,8 +50,8 @@ python3 -m torch.distributed.launch --nproc_per_node 8 $DISK_CODE/src/run.py \
     --block_size 256 \
     --do_train \
     --prediction_loss_only \
-    --per_device_train_batch_size 64 \
-    --gradient_accumulation_steps 1 \
+    --per_device_train_batch_size 16 \
+    --gradient_accumulation_steps 4 \
     --learning_rate 0.0001 \
     --weight_decay 0.01 \
     --adam_beta1 0.9 \

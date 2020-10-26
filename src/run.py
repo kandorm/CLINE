@@ -45,6 +45,8 @@ from transformers import (
 
 from dataloader import get_dataset, ModelArguments, DataTrainingArguments
 
+from lecbert import LecbertConfig, DataCollatorForLEC, LecbertForPreTraining, LecbertTokenizer
+
 logger = logging.getLogger(__name__)
 
 
@@ -101,7 +103,9 @@ def main():
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
 
-    if model_args.model_name_or_path:
+    if model_args.model_type == "lecbert":
+        config = LecbertConfig.from_pretrained(model_args.config_name, cache_dir=model_args.cache_dir)
+    elif model_args.model_name_or_path:
         config = AutoConfig.from_pretrained(model_args.model_name_or_path, cache_dir=model_args.cache_dir)
     elif model_args.config_name:
         config = AutoConfig.from_pretrained(model_args.config_name, cache_dir=model_args.cache_dir)
@@ -109,7 +113,9 @@ def main():
         config = CONFIG_MAPPING[model_args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
 
-    if model_args.tokenizer_name:
+    if model_args.model_type == "lecbert":
+        tokenizer = LecbertTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir, config=config)
+    elif model_args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir, config=config)
     elif model_args.model_name_or_path:
         tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, cache_dir=model_args.cache_dir)
@@ -120,19 +126,30 @@ def main():
         )
 
     if model_args.model_name_or_path:
-        model = AutoModelForPreTraining.from_pretrained(
-            model_args.model_name_or_path,
-            from_tf=bool(".ckpt" in model_args.model_name_or_path),
-            config=config,
-            cache_dir=model_args.cache_dir,
-        )
+        if model_args.model_type == "lecbert":
+            model = LecbertForPreTraining.from_pretrained(
+                model_args.model_name_or_path,
+                from_tf=bool(".ckpt" in model_args.model_name_or_path),
+                config=config,
+                cache_dir=model_args.cache_dir,
+            )
+        else:
+            model = AutoModelForPreTraining.from_pretrained(
+                model_args.model_name_or_path,
+                from_tf=bool(".ckpt" in model_args.model_name_or_path),
+                config=config,
+                cache_dir=model_args.cache_dir,
+            )
     else:
         logger.info("Training new model from scratch")
-        model = AutoModelForPreTraining.from_config(config)
+        if model_args.model_type == "lecbert":
+            model = LecbertForPreTraining(config)
+        else:
+            model = AutoModelForPreTraining.from_config(config)
 
     model.resize_token_embeddings(len(tokenizer))
 
-    if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
+    if config.model_type in ["bert", "roberta", "distilbert", "camembert", "lecbert"] and not data_args.mlm:
         raise ValueError(
             "BERT and RoBERTa-like models do not have LM heads but masked LM heads. They must be run using the"
             "--mlm flag (masked language modeling)."
@@ -147,7 +164,9 @@ def main():
     # Get datasets
 
     train_dataset = (
-        get_dataset(data_args, tokenizer=tokenizer, cache_dir=model_args.cache_dir) if training_args.do_train else None
+        get_dataset(data_args, tokenizer=tokenizer, cache_dir=model_args.cache_dir)
+        if training_args.do_train
+        else None
     )
 
     eval_dataset = (
@@ -156,7 +175,13 @@ def main():
         else None
     )
 
-    if config.model_type == "xlnet":
+    if config.model_type == "lecbert":
+        data_collator = DataCollatorForLEC(
+            tokenizer=tokenizer,
+            mlm=data_args.mlm,
+            mlm_probability=data_args.mlm_probability
+        )
+    elif config.model_type == "xlnet":
         data_collator = DataCollatorForPermutationLanguageModeling(
             tokenizer=tokenizer,
             plm_probability=data_args.plm_probability,
