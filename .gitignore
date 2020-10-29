@@ -4,3 +4,4 @@ model/
 log/
 cache/
 simple_config.json
+*.pyc
