@@ -114,9 +114,9 @@ def main():
         logger.warning("You are instantiating a new config instance from scratch.")
 
     if model_args.model_type == "lecbert":
-        tokenizer = LecbertTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir, config=config)
+        tokenizer = LecbertTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir)
     elif model_args.tokenizer_name:
-        tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir, config=config)
+        tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir)
     elif model_args.model_name_or_path:
         tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, cache_dir=model_args.cache_dir)
     else:

@@ -3,7 +3,7 @@
       "LecbertForPreTraining"
     ],
     "margin": 0.5,
-    "num_labels": 7,
+    "num_token_error": 7,
     "attention_probs_dropout_prob": 0.1,
     "bos_token_id": 0,
     "eos_token_id": 2,

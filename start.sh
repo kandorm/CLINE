@@ -36,7 +36,7 @@ OUTPUT_PATH=$OUTPUT_DIR/$CORPUS_NAME-$MODEL_NAME-tiny
 DATA_PATH=$DATA_DIR/$CORPUS_NAME-tiny-lec-disk
 
 
-python3 -m torch.distributed.launch --nproc_per_node 8 $DISK_CODE/src/run.py \
+python3 -m torch.distributed.launch --nproc_per_node 8 --nnodes=1 --node_rank=0 $DISK_CODE/src/run.py \
     --model_type $MODEL_NAME \
     --output_dir $OUTPUT_PATH \
     --config_name $CONFIG_PATH \
@@ -51,7 +51,7 @@ python3 -m torch.distributed.launch --nproc_per_node 8 $DISK_CODE/src/run.py \
     --do_train \
     --prediction_loss_only \
     --per_device_train_batch_size 16 \
-    --gradient_accumulation_steps 4 \
+    --gradient_accumulation_steps 1 \
     --learning_rate 0.0001 \
     --weight_decay 0.01 \
     --adam_beta1 0.9 \
