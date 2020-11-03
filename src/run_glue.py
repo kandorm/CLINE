@@ -25,7 +25,7 @@ from typing import Callable, Dict, Optional
 
 import numpy as np
 
-from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer, EvalPrediction, GlueDataset
+from transformers import EvalPrediction, GlueDataset
 from transformers import GlueDataTrainingArguments as DataTrainingArguments
 from transformers import (
     HfArgumentParser,
@@ -58,6 +58,10 @@ class ModelArguments:
     )
     cache_dir: Optional[str] = field(
         default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
+    )
+    model_type: Optional[str] = field(
+        default=None,
+        metadata={"help": "Model type from list [lecbert, bert, roberta]"},
     )
 
 
@@ -115,6 +119,13 @@ def main():
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
+
+    if model_args.model_type in ["lecbert"]:
+        from lecbert import LecbertConfig as AutoConfig
+        from lecbert import LecbertForMultipleChoice as AutoModelForSequenceClassification
+        from lecbert import LecbertTokenizer as AutoTokenizer
+    else:
+        from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
 
     config = AutoConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,

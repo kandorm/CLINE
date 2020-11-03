@@ -918,7 +918,7 @@ class LecbertForSequenceClassification(LecbertPreTrainedModel):
         """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        outputs = self.roberta(
+        outputs = self.lecbert(
             input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,

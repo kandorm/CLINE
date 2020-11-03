@@ -9,9 +9,11 @@ fi
 
 MODEL_PATH=$MODEL_DIR/enwiki_bookcorpus
 TASK_NAME=CoLA  # CoLA, SST-2, MRPC, STS-B, QQP, MNLI, QNLI, RTE, WNLI
+MODEL_TYPE=lecbert
 
 python3 $DISK_CODE/src/run_glue.py \
   --model_name_or_path $MODEL_PATH \
+  --model_type $MODEL_TYPE \
   --task_name $TASK_NAME \
   --do_train \
   --do_eval \
