@@ -179,7 +179,8 @@ def main():
         data_collator = DataCollatorForLEC(
             tokenizer=tokenizer,
             mlm=data_args.mlm,
-            mlm_probability=data_args.mlm_probability
+            mlm_probability=data_args.mlm_probability,
+            block_size=data_args.block_size,
         )
     elif config.model_type == "xlnet":
         data_collator = DataCollatorForPermutationLanguageModeling(

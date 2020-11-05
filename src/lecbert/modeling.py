@@ -3,7 +3,7 @@ import warnings
 
 import torch
 import torch.nn as nn
-from torch.nn import CrossEntropyLoss, TripletMarginLoss, MSELoss
+from torch.nn import CrossEntropyLoss, MSELoss
 from dataclasses import dataclass
 
 from typing import Optional, Tuple
@@ -726,6 +726,16 @@ class LecbertTECHead(nn.Module):
         return x
 
 
+class LecbertSECHead(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.seq_relationship = nn.Linear(config.hidden_size, 2)
+
+    def forward(self, pooled_output):
+        seq_relationship_score = self.seq_relationship(pooled_output)
+        return seq_relationship_score
+
+
 class LecbertForPreTraining(LecbertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -733,6 +743,7 @@ class LecbertForPreTraining(LecbertPreTrainedModel):
         self.lecbert = LecbertModel(config)
         self.lm_head = LecbertLMHead(config)
         self.tokn_classifier = LecbertTECHead(config)
+        self.sent_classifier = LecbertSECHead(config)
 
         self.init_weights()
 
@@ -748,19 +759,20 @@ class LecbertForPreTraining(LecbertPreTrainedModel):
         head_mask=None,
         inputs_embeds=None,
         labels=None,
-        ori_syn_ant_sent=None, # Combination of original sentence, synonymous sentence and antonym sentence
-        ori_syn_ant_mask=None,
-        ori_syn_ant_embd=None,
-        ori_syn_ant_tok_type=None,
-        ori_syn_ant_pos_ids=None,
-        ori_syn_ant_hed_mask=None,
         synonym_antonym_sent=None, # Replace some words of original sentence with synonyms and antonyms
         synonym_antonym_mask=None,
-        synonym_antonym_embd=None,
         synonym_antonym_tok_type=None,
         synonym_antonym_pos_ids=None,
         synonym_antonym_hed_mask=None,
+        synonym_antonym_embd=None,
         replace_label=None,
+        ori_syn_ant_sent=None, # Sentence pair of original sentence, synonymous sentence (antonym sentence)
+        ori_syn_ant_mask=None,
+        ori_syn_ant_tok_type=None,
+        ori_syn_ant_pos_ids=None,
+        ori_syn_ant_hed_mask=None,
+        ori_syn_ant_embd=None,
+        ori_syn_ant_label=None,
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
@@ -815,7 +827,7 @@ class LecbertForPreTraining(LecbertPreTrainedModel):
         prediction_scores = self.lm_head(sequence_output)
 
         # Adversarial Contrastive Learning
-        ori_syn_ant_outputs = self.lecbert(
+        sec_outputs = self.lecbert(
             ori_syn_ant_sent,
             attention_mask=ori_syn_ant_mask,
             token_type_ids=ori_syn_ant_tok_type,
@@ -827,15 +839,11 @@ class LecbertForPreTraining(LecbertPreTrainedModel):
             return_dict=return_dict,
         )
 
-        ori_syn_ant_pooled_output = ori_syn_ant_outputs[1]
-        hidden_size = ori_syn_ant_pooled_output.size(-1)
-        ori_syn_ant_pooled_output = ori_syn_ant_pooled_output.view(3, -1, hidden_size) # (3 bsz hidden)
-        ori_pooled_output = ori_syn_ant_pooled_output[0]
-        syn_pooled_output = ori_syn_ant_pooled_output[1]
-        ant_pooled_output = ori_syn_ant_pooled_output[2]
+        sec_pooled_output = sec_outputs[1]
+        sent_cls_scores = self.sent_classifier(sec_pooled_output)
 
         # Token Error Classifiaction
-        syn_ant_outputs = self.lecbert(
+        tec_outputs = self.lecbert(
             synonym_antonym_sent,
             attention_mask=synonym_antonym_mask,
             token_type_ids=synonym_antonym_tok_type,
@@ -846,30 +854,27 @@ class LecbertForPreTraining(LecbertPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-        syn_ant_sequence_output = syn_ant_outputs[0]
-        syn_ant_scores = self.tokn_classifier(syn_ant_sequence_output)
+        tec_sequence_output = tec_outputs[0]
+        tokn_cls_scores = self.tokn_classifier(tec_sequence_output)
 
         total_loss = None
-        if labels is not None and replace_label is not None:
+        if labels is not None and replace_label is not None and ori_syn_ant_label is not None:
             loss_fct = CrossEntropyLoss()
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
-            token_cls_loss = loss_fct(syn_ant_scores.view(-1, self.config.num_token_error), replace_label.view(-1))
-            loss_triplet = TripletMarginLoss(margin=self.config.margin)
-            sent_comp_loss = loss_triplet(ori_pooled_output, syn_pooled_output, ant_pooled_output)
+            tokn_cls_loss = loss_fct(tokn_cls_scores.view(-1, self.config.num_token_error), replace_label.view(-1))
+            sent_cls_loss = loss_fct(sent_cls_scores.view(-1, 2), ori_syn_ant_label.view(-1))
 
-            print(masked_lm_loss)
-            print(token_cls_loss)
-            print(sent_comp_loss)
-            total_loss = masked_lm_loss + token_cls_loss + sent_comp_loss
+            total_loss = masked_lm_loss + tokn_cls_loss + sent_cls_loss
 
         if not return_dict:
-            output = (prediction_scores,syn_ant_scores) + outputs[2:]
+            output = (prediction_scores,tokn_cls_scores,sent_cls_scores) + outputs[2:]
             return ((total_loss,) + output) if total_loss is not None else output
 
         return LecbertForPretrainingOutput(
             loss=total_loss,
             prediction_logits=prediction_scores,
-            syn_ant_logits=syn_ant_scores,
+            tokn_cls_logits=tokn_cls_scores,
+            sent_cls_logits=sent_cls_scores,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
@@ -879,7 +884,8 @@ class LecbertForPreTraining(LecbertPreTrainedModel):
 class LecbertForPretrainingOutput(ModelOutput):
     loss: Optional[torch.FloatTensor] = None
     prediction_logits: torch.FloatTensor = None
-    syn_ant_logits: torch.FloatTensor = None
+    tokn_cls_logits: torch.FloatTensor = None
+    sent_cls_logits: torch.FloatTensor = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
 
