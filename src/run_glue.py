@@ -122,7 +122,7 @@ def main():
 
     if model_args.model_type in ["lecbert"]:
         from lecbert import LecbertConfig as AutoConfig
-        from lecbert import LecbertForMultipleChoice as AutoModelForSequenceClassification
+        from lecbert import LecbertForSequenceClassification as AutoModelForSequenceClassification
         from lecbert import LecbertTokenizer as AutoTokenizer
     else:
         from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
