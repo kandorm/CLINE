@@ -21,8 +21,10 @@ random.seed(12345)
 from spacy.tokens import Doc
 Doc.set_extension('_synonym_sent', default=False)
 Doc.set_extension('_synonym_intv', default=False)
+Doc.set_extension('_ori_syn_intv', default=False)
 Doc.set_extension('_antonym_sent', default=False)
 Doc.set_extension('_antonym_intv', default=False)
+Doc.set_extension('_ori_ant_intv', default=False)
 
 from wordnet import (
     REPLACE_POS,
@@ -211,35 +213,61 @@ def get_dataset(
 
     def word_replace(examples):
         original_sent = []
+        ori_syn_label = []
+        ori_ant_label = []
         synonym_sent = []
         synonym_label = []
+        synonym_type = []
         antonym_sent = []
         antonym_label = []
+        antonym_type = []
 
         lines = examples['text']
         docs = spacy_nlp.pipe(lines, n_process=1, batch_size=100, disable=['parser', 'ner'])
         for doc in docs:
             if len(doc) < 2: continue  # line break
-            ori_sent = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(" ".join([t.text for t in doc])))
+            ori_sent = tokenizer.tokenize(" ".join([t.text for t in doc]))
+            syn_sent = tokenizer.tokenize(" ".join(doc._._synonym_sent))
+            ant_sent = tokenizer.tokenize(" ".join(doc._._antonym_sent))
 
-            syn_sent = tokenizer.tokenize(doc._._synonym_sent)
-            ant_sent = tokenizer.tokenize(doc._._antonym_sent)
             syn_labl = get_replace_label(syn_sent, doc._._synonym_intv)
+            ori_syn_labl = get_replace_label(ori_sent, doc._._ori_syn_intv)
             ant_labl = get_replace_label(ant_sent, doc._._antonym_intv)
+            ori_ant_labl = get_replace_label(ori_sent, doc._._ori_ant_intv)
+
+            if sum(syn_labl) == 0:
+                syn_type = REPLACE_ORIGINAL
+            else:
+                syn_type = doc._._synonym_intv[0][-1]
+
+            if sum(ant_labl) == 0:
+                ant_type = REPLACE_ORIGINAL
+            else:
+                ant_type = doc._._antonym_intv[0][-1]
+
+            ori_sent = tokenizer.convert_tokens_to_ids(ori_sent)
             syn_sent = tokenizer.convert_tokens_to_ids(syn_sent)
             ant_sent = tokenizer.convert_tokens_to_ids(ant_sent)
 
             original_sent.append(ori_sent)
+            ori_syn_label.append(ori_syn_labl)
+            ori_ant_label.append(ori_ant_labl)
             synonym_sent.append(syn_sent)
             synonym_label.append(syn_labl)
+            synonym_type.append(syn_type)
             antonym_sent.append(ant_sent)
             antonym_label.append(ant_labl)
+            antonym_type.append(ant_type)
 
         return {'original_sent': original_sent,
+                'ori_syn_label': ori_syn_label,
+                'ori_ant_label': ori_ant_label,
                 'synonym_sent': synonym_sent,
                 'synonym_label': synonym_label,
+                'synonym_type': synonym_type,
                 'antonym_sent': antonym_sent,
-                'antonym_label': antonym_label}
+                'antonym_label': antonym_label,
+                'antonym_type': antonym_type}
 
 
     if args.line_by_line:
@@ -263,7 +291,9 @@ def get_dataset(
                               load_from_cache_file=True,
                               cache_file_name=args.preprocess_cache_file,
                               num_proc=args.preprocess_num_process)
-        dataset.set_format(type=None, columns=['original_sent', 'synonym_sent', 'synonym_label', 'antonym_sent', 'antonym_label'])
+        dataset.set_format(type=None, columns=['original_sent', 'ori_syn_label', 'ori_ant_label', 
+                                               'synonym_sent', 'synonym_label', 'synonym_type',
+                                               'antonym_sent', 'antonym_label', 'antonym_type'])
 
     else:
         dataset = dataset.map(lines_to_block,
@@ -319,8 +349,10 @@ def search_replacement(doc, candidate_index, replace_type, max_num, pos_to_words
 def replace_word(doc):
     synonym_sent = []
     synonym_intv = []
+    ori_syn_intv = []
     antonym_sent = []
     antonym_intv = []
+    ori_ant_intv = []
 
     length = len(doc)
     rep_num = int(length*REPLACE_RATIO)
@@ -370,34 +402,40 @@ def replace_word(doc):
     all_replace = ant_replace + syn_replace
     all_replace = sorted(all_replace, key=lambda x:x[0], reverse=True)
 
-    syn_len = -1 # point to the space before next token
+    ori_len = -1 # point to the space before next token
+    syn_len = -1
     ant_len = -1
     rep_idx, rep_word, rep_type = all_replace.pop() if all_replace else (None, None, None)
     for index, token in enumerate(doc):
-        syn = ant = token.text
+        ori = syn = ant = token.text
 
-        if index == rep_idx:
+        while index == rep_idx:
             if rep_type in [REPLACE_SYNONYM, REPLACE_HYPERNYMS, REPLACE_LEMMINFLECT]:
                 syn = rep_word
                 synonym_intv.append((syn_len, syn_len + len(syn.encode('utf-8')), rep_type)) # fix length mismatch, mx.encode for bytelevelbpe
+                ori_syn_intv.append((ori_len, ori_len + len(ori.encode('utf-8')), rep_type))
             elif rep_type in [REPLACE_ANTONYM, REPLACE_ADJACENCY, REPLACE_RANDOM]:
                 ant = rep_word
                 antonym_intv.append((ant_len, ant_len + len(ant.encode('utf-8')), rep_type))
+                ori_ant_intv.append((ori_len, ori_len + len(ori.encode('utf-8')), rep_type))
             else:
                 pass
 
             rep_idx, rep_word, rep_type = all_replace.pop() if all_replace else (None, None, None)
 
+        ori_len = ori_len + len(ori.encode('utf-8')) + 1
         syn_len = syn_len + len(syn.encode('utf-8')) + 1 # +1 to point the space before next token
         ant_len = ant_len + len(ant.encode('utf-8')) + 1
 
         synonym_sent.append(syn)
         antonym_sent.append(ant)
 
-    doc._._synonym_sent = " ".join(synonym_sent)
+    doc._._synonym_sent = synonym_sent
     doc._._synonym_intv = synonym_intv
-    doc._._antonym_sent = " ".join(antonym_sent)
+    doc._._ori_syn_intv = ori_syn_intv
+    doc._._antonym_sent = antonym_sent
     doc._._antonym_intv = antonym_intv
+    doc._._ori_ant_intv = ori_ant_intv
 
     return doc
 
@@ -426,13 +464,21 @@ if __name__ == "__main__":
     # docs = spacy_nlp.pipe(txt, n_process=1, batch_size=100, disable=['parser', 'ner'])
     # for doc in docs:
     #     print(" ".join([t.text for t in doc]))
-    #     print(doc._._synonym_sent)
-    #     print(doc._._antonym_sent)
+    #     print(" ".join(doc._._synonym_sent))
+    #     print(" ".join(doc._._antonym_sent))
 
-    #     syn_sent = tokenizer.tokenize(doc._._synonym_sent)
-    #     ant_sent = tokenizer.tokenize(doc._._antonym_sent)
+    #     ori_sent = tokenizer.tokenize(" ".join([t.text for t in doc]))
+    #     syn_sent = tokenizer.tokenize(" ".join(doc._._synonym_sent))
+    #     ant_sent = tokenizer.tokenize(" ".join(doc._._antonym_sent))
+
     #     syn_labl = get_replace_label(syn_sent, doc._._synonym_intv)
+    #     ori_syn_labl = get_replace_label(ori_sent, doc._._ori_syn_intv)
     #     ant_labl = get_replace_label(ant_sent, doc._._antonym_intv)
+    #     ori_ant_labl = get_replace_label(ori_sent, doc._._ori_ant_intv)
 
+    #     print([(ori_sent[i], ori_syn_labl[i]) for i in range(len(ori_sent))])
     #     print([(syn_sent[i], syn_labl[i])for i in range(len(syn_labl))])
+    #     print(doc._._synonym_intv[0][-1])
+    #     print([(ori_sent[i], ori_ant_labl[i]) for i in range(len(ori_sent))])
     #     print([(ant_sent[i], ant_labl[i])for i in range(len(ant_labl))])
+    #     print(doc._._antonym_intv[0][-1])
