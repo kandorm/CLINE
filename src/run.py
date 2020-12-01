@@ -33,7 +33,6 @@ from transformers import (
     AutoModelForPreTraining,
     DataCollatorForLanguageModeling,
     DataCollatorForPermutationLanguageModeling,
-    DataCollatorForNextSentencePrediction,
     HfArgumentParser,
     LineByLineTextDataset,
     PreTrainedTokenizer,
@@ -116,9 +115,9 @@ def main():
     if model_args.model_type == "lecbert":
         tokenizer = LecbertTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir)
     elif model_args.tokenizer_name:
-        tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir)
+        tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir, config=config)
     elif model_args.model_name_or_path:
-        tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, cache_dir=model_args.cache_dir)
+        tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, cache_dir=model_args.cache_dir, config=config)
     else:
         raise ValueError(
             "You are instantiating a new tokenizer from scratch. This is not supported, but you can do it from another script, save it,"
@@ -180,20 +179,13 @@ def main():
             tokenizer=tokenizer,
             mlm=data_args.mlm,
             mlm_probability=data_args.mlm_probability,
-            block_size=data_args.block_size,
+            block_size=data_args.block_size
         )
     elif config.model_type == "xlnet":
         data_collator = DataCollatorForPermutationLanguageModeling(
             tokenizer=tokenizer,
             plm_probability=data_args.plm_probability,
             max_span_length=data_args.max_span_length,
-        )
-    elif config.model_type == "bert":
-        data_collator = DataCollatorForNextSentencePrediction(
-            tokenizer=tokenizer,
-            mlm=data_args.mlm,
-            mlm_probability=data_args.mlm_probability,
-            block_size=data_args.block_size,
         )
     else:
         data_collator = DataCollatorForLanguageModeling(
