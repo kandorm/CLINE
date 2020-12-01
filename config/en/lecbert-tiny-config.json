@@ -12,11 +12,11 @@
     "initializer_range": 0.02,
     "intermediate_size": 2048,
     "layer_norm_eps": 1e-05,
-    "max_position_embeddings": 258,
+    "max_position_embeddings": 514,
     "model_type": "lecbert",
     "num_attention_heads": 8,
     "num_hidden_layers": 4,
     "pad_token_id": 1,
-    "type_vocab_size": 2,
+    "type_vocab_size": 1,
     "vocab_size": 52000
 }

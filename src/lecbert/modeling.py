@@ -3,7 +3,7 @@ import warnings
 
 import torch
 import torch.nn as nn
-from torch.nn import CrossEntropyLoss, MSELoss
+from torch.nn import CrossEntropyLoss, MSELoss, BCELoss
 from dataclasses import dataclass
 
 from typing import Optional, Tuple
@@ -726,16 +726,6 @@ class LecbertTECHead(nn.Module):
         return x
 
 
-class LecbertSECHead(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.seq_relationship = nn.Linear(config.hidden_size, 2)
-
-    def forward(self, pooled_output):
-        seq_relationship_score = self.seq_relationship(pooled_output)
-        return seq_relationship_score
-
-
 class LecbertForPreTraining(LecbertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -743,7 +733,7 @@ class LecbertForPreTraining(LecbertPreTrainedModel):
         self.lecbert = LecbertModel(config)
         self.lm_head = LecbertLMHead(config)
         self.tokn_classifier = LecbertTECHead(config)
-        self.sent_classifier = LecbertSECHead(config)
+        self.log_vars = nn.Parameter(torch.zeros(3))
 
         self.init_weights()
 
@@ -759,26 +749,13 @@ class LecbertForPreTraining(LecbertPreTrainedModel):
         head_mask=None,
         inputs_embeds=None,
         labels=None,
-        synonym_antonym_sent=None, # Replace some words of original sentence with synonyms and antonyms
-        synonym_antonym_mask=None,
-        synonym_antonym_tok_type=None,
-        synonym_antonym_pos_ids=None,
-        synonym_antonym_hed_mask=None,
-        synonym_antonym_embd=None,
-        replace_label=None,
-        ori_syn_ant_sent=None, # Sentence pair of original sentence, synonymous sentence (antonym sentence)
-        ori_syn_ant_mask=None,
-        ori_syn_ant_tok_type=None,
-        ori_syn_ant_pos_ids=None,
-        ori_syn_ant_hed_mask=None,
-        ori_syn_ant_embd=None,
-        ori_syn_ant_label=None,
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
         antonym_sent=None,
+        antonym_label=None,
         synonym_sent=None,
-        original_sent=None,
+        synonym_label=None,
         **kwargs,
     ):
         r"""
@@ -823,58 +800,41 @@ class LecbertForPreTraining(LecbertPreTrainedModel):
             return_dict=return_dict,
         )
 
-        sequence_output = outputs[0]
-        prediction_scores = self.lm_head(sequence_output)
+        sequence_output, pooled_output = outputs[:2]
 
-        # Adversarial Contrastive Learning
-        sec_outputs = self.lecbert(
-            ori_syn_ant_sent,
-            attention_mask=ori_syn_ant_mask,
-            token_type_ids=ori_syn_ant_tok_type,
-            position_ids=ori_syn_ant_pos_ids,
-            head_mask=ori_syn_ant_hed_mask,
-            inputs_embeds=ori_syn_ant_embd,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
+        batch_size = input_ids.size(0) // 3
+        ori_seq, syn_ant_seq = sequence_output[:batch_size], sequence_output[batch_size:]
+        mlm_labels, tec_labels = labels[:batch_size], labels[batch_size:]
+        mlm_scores = self.lm_head(ori_seq)
+        tec_scores = self.tokn_classifier(syn_ant_seq)
 
-        sec_pooled_output = sec_outputs[1]
-        sent_cls_scores = self.sent_classifier(sec_pooled_output)
-
-        # Token Error Classifiaction
-        tec_outputs = self.lecbert(
-            synonym_antonym_sent,
-            attention_mask=synonym_antonym_mask,
-            token_type_ids=synonym_antonym_tok_type,
-            position_ids=synonym_antonym_pos_ids,
-            head_mask=synonym_antonym_hed_mask,
-            inputs_embeds=synonym_antonym_embd,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-        tec_sequence_output = tec_outputs[0]
-        tokn_cls_scores = self.tokn_classifier(tec_sequence_output)
+        ori_sen, syn_sen, ant_sen = pooled_output[:batch_size], pooled_output[batch_size:batch_size*2], pooled_output[batch_size*2:]
+        ori_syn_rel = torch.sigmoid(torch.mean(ori_sen * syn_sen, dim=-1, keepdim=True))
+        ori_ant_rel = torch.sigmoid(torch.mean(ori_sen * ant_sen, dim=-1, keepdim=True))
+        sec_scores = torch.cat((ori_syn_rel, ori_ant_rel), dim=0)
+        sec_labels = torch.cat((torch.ones(batch_size), torch.zeros(batch_size)), dim=0).to(labels.device)
 
         total_loss = None
-        if labels is not None and replace_label is not None and ori_syn_ant_label is not None:
-            loss_fct = CrossEntropyLoss()
-            masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
-            tokn_cls_loss = loss_fct(tokn_cls_scores.view(-1, self.config.num_token_error), replace_label.view(-1))
-            sent_cls_loss = loss_fct(sent_cls_scores.view(-1, 2), ori_syn_ant_label.view(-1))
+        if labels is not None:
+            loss_tok = CrossEntropyLoss()
+            mlm_loss = loss_tok(mlm_scores.view(-1, self.config.vocab_size), mlm_labels.view(-1))
+            tec_loss = loss_tok(tec_scores.view(-1, self.config.num_token_error), tec_labels.view(-1))
 
-            total_loss = masked_lm_loss + tokn_cls_loss + sent_cls_loss
+            loss_sen = BCELoss()
+            sec_loss = loss_sen(sec_scores.view(-1), sec_labels.view(-1))
+
+            # total_loss = mlm_loss + tec_loss + sec_loss
+            total_loss = torch.exp(-self.log_vars[0]) * mlm_loss + torch.clamp(self.log_vars[0], min=0) + \
+                         torch.exp(-self.log_vars[1]) * tec_loss + torch.clamp(self.log_vars[1], min=0) + \
+                         torch.exp(-self.log_vars[2]) * sec_loss + torch.clamp(self.log_vars[2], min=0)
 
         if not return_dict:
-            output = (prediction_scores,tokn_cls_scores,sent_cls_scores) + outputs[2:]
+            output = (mlm_scores,) + outputs[2:]
             return ((total_loss,) + output) if total_loss is not None else output
 
         return LecbertForPretrainingOutput(
             loss=total_loss,
-            prediction_logits=prediction_scores,
-            tokn_cls_logits=tokn_cls_scores,
-            sent_cls_logits=sent_cls_scores,
+            prediction_logits=mlm_scores,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
@@ -884,8 +844,6 @@ class LecbertForPreTraining(LecbertPreTrainedModel):
 class LecbertForPretrainingOutput(ModelOutput):
     loss: Optional[torch.FloatTensor] = None
     prediction_logits: torch.FloatTensor = None
-    tokn_cls_logits: torch.FloatTensor = None
-    sent_cls_logits: torch.FloatTensor = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
 

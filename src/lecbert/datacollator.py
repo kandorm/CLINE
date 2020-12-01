@@ -21,76 +21,60 @@ class DataCollatorForLEC:
     block_size: int = 512
 
     def __call__(self, examples: List[Dict[str, List[int]]]) -> Dict[str, torch.Tensor]:
-        input_ids = []
-        syn_ant_sent = []
-        syn_ant_mask = []
-        replace_label = []
-        ori_syn_ant_sent = []
-        ori_syn_ant_mask = []
-        ori_syn_ant_tok_type = []
-        ori_syn_ant_label = []
+        batch_size = len(examples)
+        block_size = self.block_size - self.tokenizer.num_special_tokens_to_add(pair=False)
+
+        ori_sent = []
+        ori_mask = []
+        syn_sent = []
+        syn_mask = []
+        ant_sent = []
+        ant_mask = []
+        ori_label = []
+        syn_label = []
+        ant_label = []
 
         for example in examples:
-            input_ids += [torch.tensor(example["input_ids"], dtype=torch.long)]
-            syn_ant_sent += [torch.tensor(example["synonym_antonym_sent"], dtype=torch.long)]
-            syn_ant_mask += [torch.tensor([1]*len(example["synonym_antonym_sent"]), dtype=torch.long)]
-            replace_label += [torch.tensor(example["replace_label"], dtype=torch.long)]
+            ori_sen = self.tokenizer.build_inputs_with_special_tokens(example["input_ids"][:block_size])
+            ori_lab = self.tokenizer.create_token_label_from_sequences([REPLACE_NONE]*len(example["input_ids"][:block_size]))
+            syn_sen = self.tokenizer.build_inputs_with_special_tokens(example["synonym_sent"][:block_size])
+            syn_lab = self.tokenizer.create_token_label_from_sequences(example["synonym_label"][:block_size])
+            ant_sen = self.tokenizer.build_inputs_with_special_tokens(example["antonym_sent"][:block_size])
+            ant_lab = self.tokenizer.create_token_label_from_sequences(example["antonym_label"][:block_size])
 
-            # TODO::remove [1:-1]
-            syn_id, syn_mask, syn_seg = self.create_features_from_example(example["original_sent"][1:-1], example["synonym_sent"][1:-1]) # drop <s> </s>
-            ant_id, ant_mask, ant_seg = self.create_features_from_example(example["original_sent"][1:-1], example["antonym_sent"][1:-1])
+            ori_sent += [torch.tensor(ori_sen, dtype=torch.long)]
+            ori_mask += [torch.ones(len(ori_sen))]
+            syn_sent += [torch.tensor(syn_sen, dtype=torch.long)]
+            syn_mask += [torch.ones(len(syn_sen))]
+            ant_sent += [torch.tensor(ant_sen, dtype=torch.long)]
+            ant_mask += [torch.ones(len(ant_sen))]
 
-            ori_syn_ant_sent += [syn_id, ant_id]
-            ori_syn_ant_mask += [syn_mask, ant_mask]
-            ori_syn_ant_tok_type += [syn_seg, ant_seg]
-            ori_syn_ant_label += [0, 1]
+            ori_label += [torch.tensor(ori_lab, dtype=torch.long)]
+            syn_label += [torch.tensor(syn_lab, dtype=torch.long)]
+            ant_label += [torch.tensor(ant_lab, dtype=torch.long)]
+
+        input_ids = ori_sent + syn_sent + ant_sent
+        attention_mask = ori_mask + syn_mask + ant_mask
+        labels = ori_label + syn_label + ant_label
+
+        assert len(input_ids) == batch_size * 3
+        assert len(attention_mask) == batch_size * 3
+        assert len(labels) == batch_size * 3
 
         input_ids = pad_sequence(input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id)
-        input_ids, labels = self.mask_tokens(input_ids)
+        attention_mask = pad_sequence(attention_mask, batch_first=True, padding_value=0)
+        labels = pad_sequence(labels, batch_first=True, padding_value=REPLACE_NONE)
 
-        syn_ant_sent = pad_sequence(syn_ant_sent, batch_first=True, padding_value=self.tokenizer.pad_token_id)
-        syn_ant_mask = pad_sequence(syn_ant_mask, batch_first=True, padding_value=0)
-        replace_label = pad_sequence(replace_label, batch_first=True, padding_value=REPLACE_NONE)
-
-        ori_syn_ant_sent = pad_sequence(ori_syn_ant_sent, batch_first=True, padding_value=self.tokenizer.pad_token_id)
-        ori_syn_ant_mask = pad_sequence(ori_syn_ant_mask, batch_first=True, padding_value=0)
-        ori_syn_ant_tok_type = pad_sequence(ori_syn_ant_tok_type, batch_first=True, padding_value=0)
-        ori_syn_ant_label = torch.tensor(ori_syn_ant_label, dtype=torch.long)
+        mlm_sent, mlm_label = self.mask_tokens(input_ids[:batch_size])
+        input_ids[:batch_size] = mlm_sent
+        labels[:batch_size] = mlm_label
 
         return {
             "input_ids": input_ids,
-            "labels": labels,
-            "synonym_antonym_sent": syn_ant_sent,
-            "synonym_antonym_mask": syn_ant_mask,
-            "replace_label": replace_label,
-            "ori_syn_ant_sent": ori_syn_ant_sent,
-            "ori_syn_ant_mask": ori_syn_ant_mask,
-            "ori_syn_ant_tok_type": ori_syn_ant_tok_type,
-            "ori_syn_ant_label" : ori_syn_ant_label
+            "attention_mask": attention_mask,
+            "labels": labels
         }
 
-    def create_features_from_example(self, tokens_a, tokens_b):
-        """Creates examples for a single document."""
-
-        max_num_tokens = self.block_size - self.tokenizer.num_special_tokens_to_add(pair=True)
-
-        tokens_a, tokens_b, _ = self.tokenizer.truncate_sequences(
-            tokens_a,
-            tokens_b,
-            num_tokens_to_remove=len(tokens_a) + len(tokens_b) - max_num_tokens,
-            truncation_strategy="longest_first",
-        )
-
-        input_id = self.tokenizer.build_inputs_with_special_tokens(tokens_a, tokens_b)
-        attention_mask = [1] * len(input_id)
-        segment_id = self.tokenizer.create_token_type_ids_from_sequences(tokens_a, tokens_b)
-        assert len(input_id) <= self.block_size
-
-        input_id = torch.tensor(input_id)
-        attention_mask = torch.tensor(attention_mask)
-        segment_id = torch.tensor(segment_id)
-
-        return input_id, attention_mask, segment_id
 
     def mask_tokens(self, inputs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
