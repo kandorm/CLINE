@@ -5,12 +5,8 @@ from dataclasses import dataclass, field
 
 from transformers import (
     HfArgumentParser,
-    PreTrainedTokenizer,
-    MODEL_WITH_LM_HEAD_MAPPING
+    PreTrainedTokenizer
 )
-
-MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
-MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
 
 import random
@@ -37,7 +33,7 @@ from wordnet import (
 from random_words import RandomWords
 rw = RandomWords()
 
-REPLACE_RATIO = 0.15
+REPLACE_RATIO = 0.5
 
 REPLACE_ORIGINAL = 0
 REPLACE_LEMMINFLECT = 1
@@ -72,7 +68,7 @@ class ModelArguments:
     )
     model_type: Optional[str] = field(
         default=None,
-        metadata={"help": "If training from scratch, pass a model type from the list: " + ", ".join(MODEL_TYPES)},
+        metadata={"help": "If training from scratch, pass a model type from the list: "},
     )
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
@@ -159,7 +155,7 @@ def get_replace_label(word_list, repl_intv):
     label = [REPLACE_ORIGINAL] * len(word_list)
     if not repl_intv:
         return label
-    cur_len = 0
+    cur_len = 0 # point to the start of the next token
     cur_range = 0
     cur_start, cur_end, cur_label = repl_intv[cur_range] # raplacement range is of increasing ordered (include spaces in text)
     for index, word in enumerate(word_list):
@@ -174,6 +170,8 @@ def get_replace_label(word_list, repl_intv):
                 cur_start, cur_end, cur_label = repl_intv[cur_range]
             else: # no new range
                 break
+    assert cur_range == len(repl_intv)-1
+
     return label
 
 
@@ -212,20 +210,24 @@ def get_dataset(
 
 
     def word_replace(examples):
-        original_sent = []
+        inputs = []
+        block_size = args.block_size - tokenizer.num_special_tokens_to_add(pair=False)
+        lines = examples['text']
+        text = "\n".join(lines)
+        tokenized_text = tokenizer.tokenize(text)
+        for i in range(0, len(tokenized_text) - block_size + 1, block_size):  # Truncate in block of block_size
+            inputs.append(tokenizer.convert_tokens_to_string(tokenized_text[i : i + block_size]))
+
+        input_ids = []
         ori_syn_label = []
         ori_ant_label = []
         synonym_sent = []
         synonym_label = []
-        synonym_type = []
         antonym_sent = []
         antonym_label = []
-        antonym_type = []
 
-        lines = examples['text']
-        docs = spacy_nlp.pipe(lines, n_process=1, batch_size=100, disable=['parser', 'ner'])
+        docs = spacy_nlp.pipe(inputs, n_process=1, batch_size=100, disable=['parser', 'ner'])
         for doc in docs:
-            if len(doc) < 2: continue  # line break
             ori_sent = tokenizer.tokenize(" ".join([t.text for t in doc]))
             syn_sent = tokenizer.tokenize(" ".join(doc._._synonym_sent))
             ant_sent = tokenizer.tokenize(" ".join(doc._._antonym_sent))
@@ -235,39 +237,25 @@ def get_dataset(
             ant_labl = get_replace_label(ant_sent, doc._._antonym_intv)
             ori_ant_labl = get_replace_label(ori_sent, doc._._ori_ant_intv)
 
-            if sum(syn_labl) == 0:
-                syn_type = REPLACE_ORIGINAL
-            else:
-                syn_type = doc._._synonym_intv[0][-1]
-
-            if sum(ant_labl) == 0:
-                ant_type = REPLACE_ORIGINAL
-            else:
-                ant_type = doc._._antonym_intv[0][-1]
-
             ori_sent = tokenizer.convert_tokens_to_ids(ori_sent)
             syn_sent = tokenizer.convert_tokens_to_ids(syn_sent)
             ant_sent = tokenizer.convert_tokens_to_ids(ant_sent)
 
-            original_sent.append(ori_sent)
+            input_ids.append(ori_sent)
             ori_syn_label.append(ori_syn_labl)
             ori_ant_label.append(ori_ant_labl)
             synonym_sent.append(syn_sent)
             synonym_label.append(syn_labl)
-            synonym_type.append(syn_type)
             antonym_sent.append(ant_sent)
             antonym_label.append(ant_labl)
-            antonym_type.append(ant_type)
 
-        return {'original_sent': original_sent,
+        return {'input_ids': input_ids,
                 'ori_syn_label': ori_syn_label,
                 'ori_ant_label': ori_ant_label,
                 'synonym_sent': synonym_sent,
                 'synonym_label': synonym_label,
-                'synonym_type': synonym_type,
                 'antonym_sent': antonym_sent,
-                'antonym_label': antonym_label,
-                'antonym_type': antonym_type}
+                'antonym_label': antonym_label}
 
 
     if args.line_by_line:
@@ -291,9 +279,8 @@ def get_dataset(
                               load_from_cache_file=True,
                               cache_file_name=args.preprocess_cache_file,
                               num_proc=args.preprocess_num_process)
-        dataset.set_format(type=None, columns=['original_sent', 'ori_syn_label', 'ori_ant_label', 
-                                               'synonym_sent', 'synonym_label', 'synonym_type',
-                                               'antonym_sent', 'antonym_label', 'antonym_type'])
+        dataset.set_format(type=None, columns=['input_ids', 'ori_syn_label', 'ori_ant_label',
+                                               'synonym_sent', 'synonym_label', 'antonym_sent', 'antonym_label'])
 
     else:
         dataset = dataset.map(lines_to_block,
@@ -460,7 +447,7 @@ if __name__ == "__main__":
     dataset = get_dataset(data_args, tokenizer=tokenizer, cache_dir=model_args.cache_dir, spacy_nlp=spacy_nlp)
     dataset.save_to_disk(data_args.preprocess_output_file)
 
-    # txt = ["Blue Network The Blue Network (previously the NBC Blue Network) was the on-air name of the now defunct American radio network, which ran from 1927 to 1945."]
+    # txt = ["Blue Network The BlueNetwork (previously the NBC Blue Network) was the on-air —— name of the now defunct American radio network, which ran from 1927 to 1945."]
     # docs = spacy_nlp.pipe(txt, n_process=1, batch_size=100, disable=['parser', 'ner'])
     # for doc in docs:
     #     print(" ".join([t.text for t in doc]))
