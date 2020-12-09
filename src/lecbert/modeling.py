@@ -30,6 +30,7 @@ from transformers.modeling_utils import (
 )
 
 from transformers.file_utils import ModelOutput
+from transformers.modeling_roberta import RobertaModel, RobertaPreTrainedModel
 
 from transformers import logging
 logger = logging.get_logger(__name__)
@@ -726,19 +727,21 @@ class LecbertTECHead(nn.Module):
         return x
 
 
-class LecbertForPreTraining(LecbertPreTrainedModel):
+class LecbertForPreTraining(RobertaPreTrainedModel):
+    authorized_missing_keys = [r"position_ids"]
+
     def __init__(self, config):
         super().__init__(config)
 
-        self.lecbert = LecbertModel(config)
-        self.lm_head = LecbertLMHead(config)
+        self.roberta = RobertaModel(config)
+        self.mlm_head = LecbertLMHead(config)
         self.tokn_classifier = LecbertTECHead(config)
         self.log_vars = nn.Parameter(torch.zeros(3))
 
         self.init_weights()
 
     def get_output_embeddings(self):
-        return self.lm_head.decoder
+        return self.mlm_head.decoder
 
     def forward(
         self,
@@ -788,7 +791,7 @@ class LecbertForPreTraining(LecbertPreTrainedModel):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # Masked Language Model
-        outputs = self.lecbert(
+        outputs = self.roberta(
             input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
@@ -805,7 +808,7 @@ class LecbertForPreTraining(LecbertPreTrainedModel):
         batch_size = input_ids.size(0) // 3
         ori_seq, syn_ant_seq = sequence_output[:batch_size], sequence_output[batch_size:]
         mlm_labels, tec_labels = labels[:batch_size], labels[batch_size:]
-        mlm_scores = self.lm_head(ori_seq)
+        mlm_scores = self.mlm_head(ori_seq)
         tec_scores = self.tokn_classifier(syn_ant_seq)
 
         ori_sen, syn_sen, ant_sen = pooled_output[:batch_size], pooled_output[batch_size:batch_size*2], pooled_output[batch_size*2:]
@@ -827,6 +830,8 @@ class LecbertForPreTraining(LecbertPreTrainedModel):
             total_loss = torch.exp(-self.log_vars[0]) * mlm_loss + torch.clamp(self.log_vars[0], min=0) + \
                          torch.exp(-self.log_vars[1]) * tec_loss + torch.clamp(self.log_vars[1], min=0) + \
                          torch.exp(-self.log_vars[2]) * sec_loss + torch.clamp(self.log_vars[2], min=0)
+
+            #print(mlm_loss.item(), tec_loss.item(), sec_loss.item())
 
         if not return_dict:
             output = (mlm_scores,) + outputs[2:]
