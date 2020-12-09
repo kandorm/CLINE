@@ -8,6 +8,7 @@ from transformers import (
     PreTrainedTokenizer
 )
 
+from transformers import AutoConfig, AutoTokenizer
 
 import random
 import spacy
@@ -138,7 +139,7 @@ class DataTrainingArguments:
         default=None, metadata={"help": "Provide the name of a cache file to use to store the results of the computation instead of the automatically generated cache file name."}
     )
     preprocess_model_type: Optional[str] = field(
-        default=None, metadata={"help": "Model type in [bert, electra, roberta, lecbert]"}
+        default=None, metadata={"help": "Model type in [bert, electra, roberta]"}
     )
     load_from_disk: bool = field(
         default=False, metadata={"help": "Load dataset from disk."}
@@ -166,7 +167,7 @@ def get_replace_label(args, word_list, repl_intv, orig_sent):
         if byte_index >= cur_start and byte_index <= cur_end: # word piece is in replacement range
             label[index] = cur_label
 
-        if args.preprocess_model_type in ['lecbert', 'roberta']:
+        if args.preprocess_model_type in ['roberta']:
             byte_offset = len(word) # bytelevel contains spaces in the token
         elif args.preprocess_model_type in ['bert', 'electra']:
             if word[:2] == '##':
@@ -341,7 +342,7 @@ def get_dataset(
                                 load_from_cache_file=True,
                                 cache_file_name=args.preprocess_cache_file)
             dataset.set_format(type=None, columns=['original_sent', 'ori_syn_intv', 'ori_ant_intv',
-                                               'synonym_sent', 'synonym_intv', 'antonym_sent', 'antonym_intv'])
+                                                   'synonym_sent', 'synonym_intv', 'antonym_sent', 'antonym_intv'])
             dataset.save_to_disk(args.word_replace_file)
 
         dataset = dataset.map(convert_tokens_to_ids,
@@ -424,40 +425,60 @@ def replace_word(doc):
 
     rep_num = min(rep_num, len(rep_index))
 
-    syn_rand = random.random()
-    ant_rand = random.random()
+    # syn_rand = random.random()
+    # ant_rand = random.random()
 
     syn_index = rep_index[:]
     random.shuffle(syn_index)
     ant_index = rep_index[:]
     random.shuffle(ant_index)
 
-    syn_replace = []
-    ant_replace = [] # [(rep_idx, rep_word, rep_type)]
+    # syn_replace = []
+    # ant_replace = [] # [(rep_idx, rep_word, rep_type)]
 
     ############### Antonym Replacement ####################
-    if ant_rand < ANTONYM_RATIO:
-        ant_replace = search_replacement(doc, candidate_index=ant_index, replace_type=REPLACE_ANTONYM, max_num=rep_num)
+    # if ant_rand < ANTONYM_RATIO:
+    #     ant_replace = search_replacement(doc, candidate_index=ant_index, replace_type=REPLACE_ANTONYM, max_num=rep_num)
 
-    # if not ant_replace and ant_rand < ANTONYM_RATIO + ADJACENCY_RATIO:
-    #     ant_replace = search_replacement(doc, candidate_index=ant_index, replace_type=REPLACE_ADJACENCY, max_num=rep_num, pos_to_words=pos_word)
+    # if not ant_replace:
+    #     ant_replace = search_replacement(doc, candidate_index=ant_index, replace_type=REPLACE_RANDOM, max_num=rep_num)
 
-    if not ant_replace:
-        ant_replace = search_replacement(doc, candidate_index=ant_index, replace_type=REPLACE_RANDOM, max_num=rep_num)
+    ant_num = rep_num
+    ant_replace = search_replacement(doc, candidate_index=ant_index, replace_type=REPLACE_ANTONYM, max_num=ant_num)
+    ant_num = len(ant_replace)
+    for item in ant_replace:
+        ant_index.remove(item[0])
+
+    ran_num = rep_num - ant_num
+    ran_replace = search_replacement(doc, candidate_index=ant_index, replace_type=REPLACE_RANDOM, max_num=ran_num)
 
     ############### Synonym Replacement ####################
-    if syn_rand < HYPERNYMS_RATIO:
-        syn_replace = search_replacement(doc, candidate_index=syn_index, replace_type=REPLACE_HYPERNYMS, max_num=rep_num)
+    # if syn_rand < HYPERNYMS_RATIO:
+    #     syn_replace = search_replacement(doc, candidate_index=syn_index, replace_type=REPLACE_HYPERNYMS, max_num=rep_num)
 
-    if not syn_replace and syn_rand < HYPERNYMS_RATIO + SYNONYM_RATIO:
-        syn_replace = search_replacement(doc, candidate_index=syn_index, replace_type=REPLACE_SYNONYM, max_num=rep_num)
+    # if not syn_replace and syn_rand < HYPERNYMS_RATIO + SYNONYM_RATIO:
+    #     syn_replace = search_replacement(doc, candidate_index=syn_index, replace_type=REPLACE_SYNONYM, max_num=rep_num)
 
-    if not syn_replace:
-        syn_replace = search_replacement(doc, candidate_index=syn_index, replace_type=REPLACE_LEMMINFLECT, max_num=rep_num)
+    # if not syn_replace:
+    #     syn_replace = search_replacement(doc, candidate_index=syn_index, replace_type=REPLACE_LEMMINFLECT, max_num=rep_num)
 
-    ############### Original Replacement ####################
+    syn_num = rep_num * SYNONYM_RATIO
+    syn_replace = search_replacement(doc, candidate_index=syn_index, replace_type=REPLACE_SYNONYM, max_num=syn_num)
+    syn_num = len(syn_replace)
+    for item in syn_replace:
+        syn_index.remove(item[0])
 
-    all_replace = ant_replace + syn_replace
+    hyp_num = rep_num * (SYNONYM_RATIO + HYPERNYMS_RATIO) - syn_num
+    hyp_replace = search_replacement(doc, candidate_index=syn_index, replace_type=REPLACE_HYPERNYMS, max_num=hyp_num)
+    hyp_num = len(hyp_replace)
+    for item in hyp_replace:
+        syn_index.remove(item[0])
+
+    lem_num = rep_num - syn_num - hyp_num
+    lem_replace = search_replacement(doc, candidate_index=syn_index, replace_type=REPLACE_LEMMINFLECT, max_num=lem_num)
+
+    # all_replace = ant_replace + syn_replace
+    all_replace = syn_replace + hyp_replace + lem_replace + ant_replace + ran_replace
     all_replace = sorted(all_replace, key=lambda x:x[0], reverse=True)
 
     ori_len = -1 # point to the space before next token
@@ -516,12 +537,6 @@ if __name__ == "__main__":
 
     spacy_nlp = spacy.load(data_args.lang) # 'en_core_web_sm'
     spacy_nlp.add_pipe(replace_word, last=True)
-
-    if model_args.model_type in ["lecbert"]:
-        from lecbert import LecbertConfig as AutoConfig
-        from lecbert import LecbertTokenizer as AutoTokenizer
-    else:
-        from transformers import AutoConfig, AutoTokenizer
 
     config = AutoConfig.from_pretrained(model_args.config_name, cache_dir=model_args.cache_dir)
     tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir, config=config)
