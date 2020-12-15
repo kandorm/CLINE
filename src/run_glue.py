@@ -37,6 +37,8 @@ from transformers import (
     set_seed,
 )
 
+from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
+
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +63,7 @@ class ModelArguments:
     )
     model_type: Optional[str] = field(
         default=None,
-        metadata={"help": "Model type from list [lecbert, bert, roberta]"},
+        metadata={"help": "Model type from list [bert, roberta]"},
     )
 
 
@@ -119,13 +121,6 @@ def main():
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
-
-    if model_args.model_type in ["lecbert"]:
-        from lecbert import LecbertConfig as AutoConfig
-        from lecbert import LecbertForSequenceClassification as AutoModelForSequenceClassification
-        from lecbert import LecbertTokenizer as AutoTokenizer
-    else:
-        from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
 
     config = AutoConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,

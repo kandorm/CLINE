@@ -28,9 +28,6 @@ from typing import Optional
 
 from transformers import (
     CONFIG_MAPPING,
-    AutoConfig,
-    AutoTokenizer,
-    AutoModelForPreTraining,
     DataCollatorForLanguageModeling,
     DataCollatorForPermutationLanguageModeling,
     HfArgumentParser,
@@ -42,9 +39,10 @@ from transformers import (
     set_seed,
 )
 
+from lecbert import DataCollatorForLEC
+
 from dataloader import get_dataset, ModelArguments, DataTrainingArguments
 
-from lecbert import LecbertConfig, DataCollatorForLEC, LecbertForPreTraining, LecbertTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +100,13 @@ def main():
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
 
+    if model_args.model_type in ["lecbert"]:
+        from lecbert import LecbertConfig as AutoConfig
+        from lecbert import LecbertTokenizer as AutoTokenizer
+        from lecbert import LecbertForPreTraining as AutoModelForPreTraining
+    else:
+        from transformers import AutoConfig, AutoTokenizer, AutoModelForPreTraining
+
     if model_args.model_name_or_path:
         config = AutoConfig.from_pretrained(model_args.model_name_or_path, cache_dir=model_args.cache_dir)
     elif model_args.config_name:
@@ -111,7 +116,7 @@ def main():
         logger.warning("You are instantiating a new config instance from scratch.")
 
     if model_args.model_name_or_path:
-        tokenizer = LecbertTokenizer.from_pretrained(model_args.model_name_or_path, cache_dir=model_args.cache_dir)
+        tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, cache_dir=model_args.cache_dir)
     elif model_args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir, config=config)
     else:
@@ -121,30 +126,22 @@ def main():
         )
 
     if model_args.model_name_or_path:
-        if model_args.model_type == "lecbert":
-            model = LecbertForPreTraining.from_pretrained(
-                model_args.model_name_or_path,
-                from_tf=bool(".ckpt" in model_args.model_name_or_path),
-                config=config,
-                cache_dir=model_args.cache_dir,
-            )
-        else:
-            model = AutoModelForPreTraining.from_pretrained(
-                model_args.model_name_or_path,
-                from_tf=bool(".ckpt" in model_args.model_name_or_path),
-                config=config,
-                cache_dir=model_args.cache_dir,
-            )
+        model = AutoModelForPreTraining.from_pretrained(
+            model_args.model_name_or_path,
+            from_tf=bool(".ckpt" in model_args.model_name_or_path),
+            config=config,
+            cache_dir=model_args.cache_dir,
+        )
     else:
         logger.info("Training new model from scratch")
         if model_args.model_type == "lecbert":
-            model = LecbertForPreTraining(config)
+            model = AutoModelForPreTraining(config)
         else:
             model = AutoModelForPreTraining.from_config(config)
 
     model.resize_token_embeddings(len(tokenizer))
 
-    if config.model_type in ["bert", "roberta", "distilbert", "camembert", "lecbert"] and not data_args.mlm:
+    if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
         raise ValueError(
             "BERT and RoBERTa-like models do not have LM heads but masked LM heads. They must be run using the"
             "--mlm flag (masked language modeling)."

@@ -1,8 +1,7 @@
 import torch
 from torch.nn.utils.rnn import pad_sequence
-from typing import Union, List, Dict, Tuple
+from typing import List, Dict, Tuple
 from dataclasses import dataclass
-from transformers import DataCollatorForLanguageModeling
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 REPLACE_NONE = -100
@@ -37,13 +36,13 @@ class DataCollatorForLEC:
         for example in examples:
             ori_sen = self.tokenizer.build_inputs_with_special_tokens(example["input_ids"][:block_size])
             ori_lab = self.tokenizer.create_token_label_from_sequences([REPLACE_NONE]*len(example["input_ids"][:block_size]))
-            syn_sen = self.tokenizer.build_inputs_with_special_tokens(example["synonym_sent"][:block_size])
+            syn_sen = self.tokenizer.build_inputs_with_special_tokens(example["synonym_ids"][:block_size])
             syn_lab = example["synonym_label"][:block_size]
-            # syn_lab = [0 if lb==REPLACE_NONE else lb for lb in syn_lab]
+            syn_lab = [1 if lb not in [REPLACE_NONE, 0] else lb for lb in syn_lab]
             syn_lab = self.tokenizer.create_token_label_from_sequences(syn_lab)
-            ant_sen = self.tokenizer.build_inputs_with_special_tokens(example["antonym_sent"][:block_size])
+            ant_sen = self.tokenizer.build_inputs_with_special_tokens(example["antonym_ids"][:block_size])
             ant_lab = example["antonym_label"][:block_size]
-            # ant_lab = [0 if lb==REPLACE_NONE else lb for lb in ant_lab]
+            ant_lab = [2 if lb not in [REPLACE_NONE, 0] else lb for lb in ant_lab]
             ant_lab = self.tokenizer.create_token_label_from_sequences(ant_lab)
 
             ori_sent += [torch.tensor(ori_sen, dtype=torch.long)]

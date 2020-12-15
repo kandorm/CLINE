@@ -8,6 +8,7 @@ from transformers import (
     PreTrainedTokenizer
 )
 
+from transformers import AutoConfig, AutoTokenizer
 
 import random
 import spacy
@@ -138,7 +139,7 @@ class DataTrainingArguments:
         default=None, metadata={"help": "Provide the name of a cache file to use to store the results of the computation instead of the automatically generated cache file name."}
     )
     preprocess_model_type: Optional[str] = field(
-        default=None, metadata={"help": "Model type in [bert, electra, roberta, lecbert]"}
+        default=None, metadata={"help": "Model type in [bert, electra, roberta]"}
     )
     load_from_disk: bool = field(
         default=False, metadata={"help": "Load dataset from disk."}
@@ -166,7 +167,7 @@ def get_replace_label(args, word_list, repl_intv, orig_sent):
         if byte_index >= cur_start and byte_index <= cur_end: # word piece is in replacement range
             label[index] = cur_label
 
-        if args.preprocess_model_type in ['lecbert', 'roberta']:
+        if args.preprocess_model_type in ['roberta']:
             byte_offset = len(word) # bytelevel contains spaces in the token
         elif args.preprocess_model_type in ['bert', 'electra']:
             if word[:2] == '##':
@@ -496,8 +497,6 @@ def replace_word(doc):
         synonym_sent.append(syn)
         antonym_sent.append(ant)
 
-    assert len(all_replace) == 0
-
     doc._._synonym_sent = synonym_sent
     doc._._synonym_intv = synonym_intv
     doc._._ori_syn_intv = ori_syn_intv
@@ -516,12 +515,6 @@ if __name__ == "__main__":
 
     spacy_nlp = spacy.load(data_args.lang) # 'en_core_web_sm'
     spacy_nlp.add_pipe(replace_word, last=True)
-
-    if model_args.model_type in ["lecbert"]:
-        from lecbert import LecbertConfig as AutoConfig
-        from lecbert import LecbertTokenizer as AutoTokenizer
-    else:
-        from transformers import AutoConfig, AutoTokenizer
 
     config = AutoConfig.from_pretrained(model_args.config_name, cache_dir=model_args.cache_dir)
     tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, cache_dir=model_args.cache_dir, config=config)
